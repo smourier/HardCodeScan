@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Buffers;
+using System.Diagnostics;
 using HardCodeScan.Utilities;
 
 namespace HardCodeScan;
@@ -8,6 +9,7 @@ internal class Program
     private static bool _excludeStrings;
     private static bool _excludeNumbers;
     private static HashSet<string> _nonMagic = new(StringComparer.CurrentCultureIgnoreCase);
+    private static SearchValues<string>? _searchValues;
 
     static Task Main()
     {
@@ -42,7 +44,14 @@ internal class Program
         var nonMagic = CommandLine.Current.GetNullifiedArgument("nm");
         if (nonMagic != null)
         {
-            _nonMagic = [.. nonMagic.Split('|').Select(s => s.Trim()).Where(s => s.Length > 0)];
+            _nonMagic = [.. nonMagic.Split(';').Select(s => s.Trim()).Where(s => s.Length > 0)];
+        }
+
+        var fe = CommandLine.Current.GetArgument<string>("fe");
+        if (fe != null)
+        {
+            var filteredExpressions = fe.Split('`').Select(s => s.Trim()).Where(s => s.Length > 0).ToArray();
+            _searchValues = SearchValues.Create(filteredExpressions.AsSpan(), StringComparison.OrdinalIgnoreCase);
         }
 
         Document? current = null;
@@ -55,12 +64,15 @@ internal class Program
             }
 
             Console.WriteLine($" Found hardcoded value: {node.ToFullString().Trim()}");
-            Console.WriteLine($"  {suggestion}");
+            if (suggestion != null)
+            {
+                Console.WriteLine($"  {suggestion}");
+            }
             Console.WriteLine();
         });
     }
 
-    public static async Task ScanHardcodedFromInputPath(string inputPath, Action<Document, SyntaxNodeOrToken, string> scannedFunction)
+    public static async Task ScanHardcodedFromInputPath(string inputPath, Action<Document, SyntaxNodeOrToken, string?> scannedFunction)
     {
         ArgumentNullException.ThrowIfNull(inputPath);
         ArgumentNullException.ThrowIfNull(scannedFunction);
@@ -108,17 +120,19 @@ internal class Program
         Console.WriteLine("Options:");
         Console.WriteLine("    /xs    Excludes strings from scan.");
         Console.WriteLine("    /xn    Excludes numbers from scan.");
-        Console.WriteLine("    /nm    List of case-insensitive non-magic texts separated by the | character.");
+        Console.WriteLine("    /nm    List of case-insensitive non-magic texts separated by the ; character.");
+        Console.WriteLine("    /fe    List of case-insensitive filtered related expressions, separated by the ` character.");
         Console.WriteLine();
         Console.WriteLine("Example:");
         Console.WriteLine();
-        Console.WriteLine("    " + Assembly.GetEntryAssembly()!.GetName().Name + " c:\\mypath /nm:255|0xFF");
+        Console.WriteLine("    " + Assembly.GetEntryAssembly()!.GetName().Name + " c:\\mypath /nm:255;0xFF /fe:Load`Color");
         Console.WriteLine();
-        Console.WriteLine("    Dumps hardcoded strings and numbers in the c:\\mypath directory C# files. Exclude 255 and 0xFF from search");
+        Console.WriteLine("    Dumps hardcoded strings and numbers in the c:\\mypath directory C# files.");
+        Console.WriteLine("    Exclude '255' and '0xFF' from search. Exclude 'Load' and 'Color' when found in expressions.");
         Console.WriteLine();
     }
 
-    public static async Task ScanHardcodedFromText(string documentName, string text, Action<Document, SyntaxNodeOrToken, string> scannedFunction)
+    public static async Task ScanHardcodedFromText(string documentName, string text, Action<Document, SyntaxNodeOrToken, string?> scannedFunction)
     {
         ArgumentNullException.ThrowIfNull(documentName);
         ArgumentNullException.ThrowIfNull(text);
@@ -130,7 +144,7 @@ internal class Program
         await ScanHardcoded(ws, scannedFunction);
     }
 
-    public static async Task ScanHardcodedFromSolution(string solutionFilePath, Action<Document, SyntaxNodeOrToken, string> scannedFunction)
+    public static async Task ScanHardcodedFromSolution(string solutionFilePath, Action<Document, SyntaxNodeOrToken, string?> scannedFunction)
     {
         ArgumentNullException.ThrowIfNull(solutionFilePath);
         ArgumentNullException.ThrowIfNull(scannedFunction);
@@ -140,7 +154,7 @@ internal class Program
         await ScanHardcoded(ws, scannedFunction);
     }
 
-    public static async Task ScanHardcodedFromProject(string projectFilePath, Action<Document, SyntaxNodeOrToken, string> scannedFunction)
+    public static async Task ScanHardcodedFromProject(string projectFilePath, Action<Document, SyntaxNodeOrToken, string?> scannedFunction)
     {
         ArgumentNullException.ThrowIfNull(projectFilePath);
         ArgumentNullException.ThrowIfNull(scannedFunction);
@@ -150,7 +164,7 @@ internal class Program
         await ScanHardcoded(ws, scannedFunction);
     }
 
-    public static async Task ScanHardcoded(Workspace workspace, Action<Document, SyntaxNodeOrToken, string> scannedFunction)
+    public static async Task ScanHardcoded(Workspace workspace, Action<Document, SyntaxNodeOrToken, string?> scannedFunction)
     {
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentNullException.ThrowIfNull(scannedFunction);
@@ -178,6 +192,9 @@ internal class Program
 
                     if (IsMagic(node, out var suggestion))
                     {
+                        if (suggestion != null && _searchValues != null && suggestion.IndexOfAny(_searchValues) >= 0)
+                            continue;
+
                         scannedFunction(document, node, suggestion);
                     }
                 }
@@ -244,8 +261,13 @@ internal class Program
         if (text == null)
             return false;
 
-        // note: this is naïve. we also should add 0d, 0f, 0m, etc.
-        if (text == "1" || text == "-1" || text == "0")
+        if (text == "1" || text == "-1" || text == "0" ||
+            text == "1.0" || text == "-1.0" ||
+            text == "1.0f" || text == "-1.0f" ||
+            text.EqualsIgnoreCase("0f") || text.EqualsIgnoreCase("0d") ||
+            text.EqualsIgnoreCase("1f") || text.EqualsIgnoreCase("1d") ||
+            text.EqualsIgnoreCase("-1f") || text.EqualsIgnoreCase("-1d")
+            )
             return true;
 
         if (_nonMagic.Contains(text))
