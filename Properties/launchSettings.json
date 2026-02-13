@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "HardCodeScan": {
+      "commandName": "Project",
+      "commandLineArgs": "E:\\smo\\GitHub\\MaterialSkin\\MaterialSkin\\TextAlignFlags.cs"
+    }
+  }
+}
