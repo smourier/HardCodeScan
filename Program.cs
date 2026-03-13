@@ -29,7 +29,7 @@ internal class Program
 
     static async Task SafeMain()
     {
-        Console.WriteLine("NormalizeLineEndings - Copyright (C) 2024-" + DateTime.Now.Year + " Simon Mourier. All rights reserved.");
+        Console.WriteLine("HardCodeScan - Copyright (C) 2024-" + DateTime.Now.Year + " Simon Mourier. All rights reserved.");
         Console.WriteLine();
 
         var inputPath = CommandLine.Current.GetNullifiedArgument(0);
